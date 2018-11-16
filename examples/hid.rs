@@ -6,7 +6,7 @@ use serial::*;
 use std::thread;
 
 fn main() {
-    let mut sp = serial::open("/dev/ttyACM0").unwrap();
+    let mut sp = serial::open("/dev/cu.usbmodemHIDF1").unwrap();
 
     sp.reconfigure(&|settings| {
         settings.set_baud_rate(Baud57600).unwrap();
@@ -23,14 +23,16 @@ fn main() {
     println!("firmware name {}", b.firmware_name());
     println!("protocol version {}", b.protocol_version());
 
-    b.set_pin_mode(13, firmata::OUTPUT);
-
-    let mut i = 0;
+    let mut enabled = false;
 
     loop {
-        thread::sleep_ms(400);
-        println!("{}",i);
-        b.digital_write(13, i);
-        i ^= 1;
+        enabled = !enabled;
+        println!("hid enabled: {}", enabled);
+        if enabled {
+            b.hid_enable();
+        } else {
+            b.hid_disable();
+        }
+        thread::sleep_ms(10_000);
     }
 }

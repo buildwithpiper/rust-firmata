@@ -150,6 +150,7 @@ pub trait Firmata {
     fn read_and_decode(&mut self) -> Result<()>;
 
     fn hid_enable(&mut self) -> Result<()>;
+    fn hid_disable(&mut self) -> Result<()>;
 }
 
 /// A structure representing a firmata board.
@@ -189,6 +190,12 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
     fn hid_enable(&mut self) -> Result<()> {
         self.connection
             .write(&mut [START_SYSEX, HID_ENABLE, END_SYSEX])
+            .map(|_| ())
+    }
+
+    fn hid_disable(&mut self) -> Result<()> {
+        self.connection
+            .write(&mut [START_SYSEX, HID_DISABLE, END_SYSEX])
             .map(|_| ())
     }
 
