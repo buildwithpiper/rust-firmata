@@ -1,5 +1,6 @@
 //! This module contains a client implementation of the
 //! [Firmata Protocol](https://github.com/firmata/protocol)
+use std::collections::HashMap;
 use std::io;
 use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::str;
@@ -48,10 +49,18 @@ pub const ONEWIRE: u8 = 7;
 pub const STEPPER: u8 = 8;
 pub const ENCODER: u8 = 9;
 
-pub const HID_ENABLE: u8 = 0x72;
-pub const HID_DISABLE: u8 = 0x73;
-pub const HID_MAP: u8 = 0x74;
-pub const HID_SETTING: u8 = 0x75;
+pub const HID_GET: u8 = 0x00;
+pub const HID_SET: u8 = 0x01;
+pub const HID_RESPONSE: u8 = 0x02;
+pub const HID_BUTTON_UP: u8 = 6;
+pub const HID_BUTTON_DOWN: u8 = 7;
+pub const HID_BUTTON_LEFT: u8 = 8;
+pub const HID_BUTTON_RIGHT: u8 = 9;
+pub const HID_BUTTON_JOYSTICK: u8 = 13;
+
+pub const HID_ENABLED: u8 = 100;
+pub const HID_SETTING_JS_SENSITIVITY: u8 = 101;
+pub const HID_SETTING_JS_INVERTED: u8 = 102;
 
 fn read<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
     let mut vec: Vec<u8> = vec![];
@@ -104,6 +113,46 @@ pub struct Pin {
     pub mode: u8,
 }
 
+/// A structure representing the current state and configuration of HID device.
+#[derive(Debug)]
+pub struct HID {
+    pub config_map: HashMap<u8, u8>,
+}
+
+impl HID {
+    fn new() -> Self {
+        HID {
+            config_map: HashMap::new(),
+        }
+    }
+
+    fn set(&mut self, config: u8, value: u8) {
+        self.config_map.insert(config, value);
+    }
+
+    fn get(&self, config: &u8) -> Option<u8> {
+        return self.config_map.get(&config).cloned();
+    }
+
+    pub fn get_char(&self, config: &u8) -> Option<char> {
+        match self.get(config) {
+            None => None,
+            Some(val) => Some(val as char),
+        }
+    }
+
+    pub fn get_bool(&self, config: &u8) -> Option<bool> {
+        match self.get(config) {
+            None => None,
+            Some(val) => Some(val != 0),
+        }
+    }
+
+    pub fn enabled(&self) -> Option<bool> {
+        return self.get_bool(&HID_ENABLED);
+    }
+}
+
 /// A trait for implementing firmata boards.
 pub trait Firmata {
     /// This function returns the raw I2C replies that have been read from
@@ -149,8 +198,8 @@ pub trait Firmata {
     /// message.
     fn read_and_decode(&mut self) -> Result<()>;
 
-    fn hid_enable(&mut self) -> Result<()>;
-    fn hid_disable(&mut self) -> Result<()>;
+    fn hid_get(&mut self, config: u8) -> Result<()>;
+    fn hid_set(&mut self, config: u8, value: u8) -> Result<()>;
 }
 
 /// A structure representing a firmata board.
@@ -161,6 +210,7 @@ pub struct Board<T: io::Read + io::Write> {
     pub protocol_version: String,
     pub firmware_name: String,
     pub firmware_version: String,
+    pub hid: HID,
 }
 
 impl<T: io::Read + io::Write> Board<T> {
@@ -173,12 +223,25 @@ impl<T: io::Read + io::Write> Board<T> {
             protocol_version: String::new(),
             pins: vec![],
             i2c_data: vec![],
+            hid: HID::new(),
         };
         try!(b.query_firmware());
         try!(b.read_and_decode());
         try!(b.query_capabilities());
         try!(b.read_and_decode());
         try!(b.query_analog_mapping());
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_ENABLED));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_UP));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_DOWN));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_LEFT));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_RIGHT));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_JOYSTICK));
         try!(b.read_and_decode());
         try!(b.report_digital(0, 1));
         try!(b.report_digital(1, 1));
@@ -187,15 +250,15 @@ impl<T: io::Read + io::Write> Board<T> {
 }
 
 impl<T: io::Read + io::Write> Firmata for Board<T> {
-    fn hid_enable(&mut self) -> Result<()> {
+    fn hid_get(&mut self, config: u8) -> Result<()> {
         self.connection
-            .write(&mut [START_SYSEX, HID_ENABLE, END_SYSEX])
+            .write(&mut [START_SYSEX, HID_GET, config, END_SYSEX])
             .map(|_| ())
     }
-
-    fn hid_disable(&mut self) -> Result<()> {
+    fn hid_set(&mut self, config: u8, value: u8) -> Result<()> {
+        self.hid.set(config, value);
         self.connection
-            .write(&mut [START_SYSEX, HID_DISABLE, END_SYSEX])
+            .write(&mut [START_SYSEX, HID_SET, config, value, END_SYSEX])
             .map(|_| ())
     }
 
@@ -366,6 +429,10 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                     }
                 }
                 match buf[1] {
+                    HID_RESPONSE => {
+                        self.hid.set(buf[2], buf[3]);
+                        Ok(())
+                    }
                     ANALOG_MAPPING_RESPONSE => {
                         if self.pins.len() > 0 {
                             let mut i = 2;
