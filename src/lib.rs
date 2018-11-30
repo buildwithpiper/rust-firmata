@@ -2,7 +2,7 @@
 //! [Firmata Protocol](https://github.com/firmata/protocol)
 use std::collections::HashMap;
 use std::io;
-use std::io::{Error, ErrorKind, Read, Result, Write};
+use std::io::{Error, ErrorKind, Result, Write};
 use std::str;
 use std::thread;
 use std::time::Duration;
@@ -98,14 +98,14 @@ pub struct I2CReply {
 }
 
 /// A structure representing an available pin mode.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Mode {
     pub mode: u8,
     pub resolution: u8,
 }
 
 /// A structure representing the current state and configuration of a pin.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Pin {
     pub modes: Vec<Mode>,
     pub analog: bool,
