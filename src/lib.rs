@@ -226,26 +226,27 @@ impl<T: io::Read + io::Write> Board<T> {
             i2c_data: vec![],
             hid: HID::new(),
         };
-        //try!(b.query_firmware());
-        //try!(b.read_and_decode());
+
+        try!(b.query_firmware());
+        try!(b.read_and_decode());
         //try!(b.query_capabilities());
         //try!(b.read_and_decode());
-        //try!(b.query_analog_mapping());
-        //try!(b.read_and_decode());
+        try!(b.query_analog_mapping());
+        try!(b.read_and_decode());
         try!(b.hid_get(HID_ENABLED));
         try!(b.read_and_decode());
-        //try!(b.hid_get(HID_BUTTON_UP));
-        //try!(b.read_and_decode());
-        //try!(b.hid_get(HID_BUTTON_DOWN));
-        //try!(b.read_and_decode());
-        //try!(b.hid_get(HID_BUTTON_LEFT));
-        //try!(b.read_and_decode());
-        //try!(b.hid_get(HID_BUTTON_RIGHT));
-        //try!(b.read_and_decode());
-        //try!(b.hid_get(HID_BUTTON_JOYSTICK));
-        //try!(b.read_and_decode());
-        // try!(b.report_digital(0, 1));
-        // try!(b.report_digital(1, 1));
+        try!(b.hid_get(HID_BUTTON_UP));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_DOWN));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_LEFT));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_RIGHT));
+        try!(b.read_and_decode());
+        try!(b.hid_get(HID_BUTTON_JOYSTICK));
+        try!(b.read_and_decode());
+        //try!(b.report_digital(0, 1));
+        //try!(b.report_digital(1, 1));
         return Ok(b);
     }
 }
@@ -395,12 +396,17 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
           Reading and decoding of port-data. This process is more delicate than expected,
           since when in HID mode, this port is spammed constantly with data used to move
           the Mouse/Keyboard. That information is ignored, retaining only known responses.
+
+          Even if the message head is correctly parsed, it is responsability of each match
+          branch to verify whether or not the message is corrupted.
         */
 
         fn is_in (i: u8, mut s: Range<u8>) -> bool { s.any(|v: u8| v == i) }
+
         let mut is_message: bool;
         let mut buf: Vec<u8>;
 
+        // Read until a message is hit.
         loop {
             // Read only message head, in case of garbage we drop just a single byte.
             buf = try!(read(&mut self.connection, 1));
@@ -415,7 +421,6 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                 true => {
                     // Get the rest of the header.
                     buf.extend(&try!(read(&mut self.connection, 2)));
-                    println!("Found buffer: {:?}", buf);
                     break;
                 },
                 false => ()
