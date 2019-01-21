@@ -6,6 +6,7 @@ use std::io::{Error, ErrorKind, Result, Write};
 use std::str;
 use std::thread;
 use std::time::Duration;
+use std::ops::Range;
 
 pub const ENCODER_DATA: u8 = 0x61;
 pub const ANALOG_MAPPING_QUERY: u8 = 0x69;
@@ -225,26 +226,26 @@ impl<T: io::Read + io::Write> Board<T> {
             i2c_data: vec![],
             hid: HID::new(),
         };
-        try!(b.query_firmware());
-        try!(b.read_and_decode());
-        try!(b.query_capabilities());
-        try!(b.read_and_decode());
-        try!(b.query_analog_mapping());
-        try!(b.read_and_decode());
+        //try!(b.query_firmware());
+        //try!(b.read_and_decode());
+        //try!(b.query_capabilities());
+        //try!(b.read_and_decode());
+        //try!(b.query_analog_mapping());
+        //try!(b.read_and_decode());
         try!(b.hid_get(HID_ENABLED));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_UP));
-        try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_DOWN));
-        try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_LEFT));
-        try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_RIGHT));
-        try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_JOYSTICK));
-        try!(b.read_and_decode());
-        try!(b.report_digital(0, 1));
-        try!(b.report_digital(1, 1));
+        //try!(b.hid_get(HID_BUTTON_UP));
+        //try!(b.read_and_decode());
+        //try!(b.hid_get(HID_BUTTON_DOWN));
+        //try!(b.read_and_decode());
+        //try!(b.hid_get(HID_BUTTON_LEFT));
+        //try!(b.read_and_decode());
+        //try!(b.hid_get(HID_BUTTON_RIGHT));
+        //try!(b.read_and_decode());
+        //try!(b.hid_get(HID_BUTTON_JOYSTICK));
+        //try!(b.read_and_decode());
+        // try!(b.report_digital(0, 1));
+        // try!(b.report_digital(1, 1));
         return Ok(b);
     }
 }
@@ -390,7 +391,37 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
     }
 
     fn read_and_decode(&mut self) -> Result<()> {
-        let mut buf = try!(read(&mut self.connection, 3));
+        /*
+          Reading and decoding of port-data. This process is more delicate than expected,
+          since when in HID mode, this port is spammed constantly with data used to move
+          the Mouse/Keyboard. That information is ignored, retaining only known responses.
+        */
+
+        fn is_in (i: u8, mut s: Range<u8>) -> bool { s.any(|v: u8| v == i) }
+        let mut is_message: bool;
+        let mut buf: Vec<u8>;
+
+        loop {
+            // Read only message head, in case of garbage we drop just a single byte.
+            buf = try!(read(&mut self.connection, 1));
+
+            // Check if byte is a message descriptor.
+            is_message = is_in(buf[0], PROTOCOL_VERSION..(PROTOCOL_VERSION + 1)) ||
+                         is_in(buf[0], ANALOG_MESSAGE..0xEF) ||
+                         is_in(buf[0], DIGITAL_MESSAGE..0x9F) ||
+                         is_in(buf[0], START_SYSEX..(START_SYSEX + 1));
+
+            match is_message {
+                true => {
+                    // Get the rest of the header.
+                    buf.extend(&try!(read(&mut self.connection, 2)));
+                    println!("Found buffer: {:?}", buf);
+                    break;
+                },
+                false => ()
+            }
+        }
+
         match buf[0] {
             PROTOCOL_VERSION => {
                 self.protocol_version = format!("{:o}.{:o}", buf[1], buf[2]);
