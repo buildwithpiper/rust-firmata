@@ -49,6 +49,7 @@ pub const ONEWIRE: u8 = 7;
 pub const STEPPER: u8 = 8;
 pub const ENCODER: u8 = 9;
 
+pub const CC_EVENT: u8 = 0x03;
 pub const HID_GET: u8 = 0x00;
 pub const HID_SET: u8 = 0x01;
 pub const HID_RESPONSE: u8 = 0x02;
@@ -418,6 +419,11 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                         }
                     }
                 }
+                Ok(())
+            }
+            CC_EVENT => {
+                // Read the rest of the information.
+                buf.extend(&try!(read(&mut self.connection, 2)));
                 Ok(())
             }
             START_SYSEX => {
