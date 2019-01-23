@@ -2,10 +2,11 @@
 //! [Firmata Protocol](https://github.com/firmata/protocol)
 use std::collections::HashMap;
 use std::io;
+use std::iter::Iterator;
 use std::io::{Error, ErrorKind, Result, Write};
 use std::str;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const ENCODER_DATA: u8 = 0x61;
 pub const ANALOG_MAPPING_QUERY: u8 = 0x69;
@@ -198,6 +199,10 @@ pub trait Firmata {
     /// This function reads from the firmata device and parses one firmata
     /// message.
     fn read_and_decode(&mut self) -> Result<()>;
+    // This function reads from firmata device and waits for an specific message.
+    fn expected_read_and_decode(&mut self, expected: u8) -> Result<Vec<u8>>;
+    // This function decodes a message head.
+    fn decode(&mut self, buf: Vec<u8>) -> Result<Vec<u8>>;
 
     fn hid_get(&mut self, config: u8) -> Result<()>;
     fn hid_set(&mut self, config: u8, value: u8) -> Result<()>;
@@ -391,11 +396,66 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
     }
 
     fn read_and_decode(&mut self) -> Result<()> {
-        let mut buf = try!(read(&mut self.connection, 3));
+        let buf = try!(read(&mut self.connection, 3));
+        match self.decode(buf) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e)
+        }
+    }
+
+    fn expected_read_and_decode(&mut self, expected: u8) -> Result<Vec<u8>> {
+        /*
+          Logical extension of read_and_decode method, it accepts an
+          expected identifier and reads serial port until that identifier
+          is reached or after a given time passed. It also returns the
+          read buffer.
+          A message is expected to be of the form:
+
+          |__| |__| |__| |__| .... |__| |__|
+           ID                            TERMINATOR (SYSEX ONLY)
+          |<-- HEAD -->| |<-- BODY -->|
+
+          If expected == 0 it will read any command it gets.
+        */
+
+        fn is_id<T: Iterator<Item=u8>>(i: u8, mut s: T) -> bool { s.any(|v: u8| v == i) }
+
+        let mut buf: Vec<u8>;
+        let mut is_identifier: bool;
+
+        let start_time = Instant::now();
+
+        loop {
+            // Peek 1 byte to look for identifiers.
+            buf = try!(read(&mut self.connection, 1));
+
+            is_identifier = is_id(buf[0], PROTOCOL_VERSION..=PROTOCOL_VERSION) ||
+                            is_id(buf[0], START_SYSEX..=START_SYSEX) ||
+                            is_id(buf[0], CC_EVENT..=CC_EVENT) ||
+                            is_id(buf[0], ANALOG_MESSAGE..0xEF) ||
+                            is_id(buf[0], DIGITAL_MESSAGE..0x9F);
+            match is_identifier && (buf[0] == expected || expected == 0) {
+                true => {
+                    // Get the rest of the header.
+                    buf.extend(&try!(read(&mut self.connection, 2)));
+                    break;
+                },
+                false => {
+                    if start_time.elapsed().as_secs() > 5 {
+                        return Err(Error::new(ErrorKind::Other, "Timed Out"));
+                    }
+                }
+            }
+        }
+
+        return self.decode(buf);
+    }
+
+    fn decode(&mut self, mut buf: Vec<u8>) -> Result<Vec<u8>> {
         match buf[0] {
             PROTOCOL_VERSION => {
                 self.protocol_version = format!("{:o}.{:o}", buf[1], buf[2]);
-                Ok(())
+                Ok(buf)
             }
             ANALOG_MESSAGE...0xEF => {
                 let value = (buf[1] as i32) | ((buf[2] as i32) << 7);
@@ -404,7 +464,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                 if self.pins.len() as i32 > pin {
                     self.pins[pin as usize].value = value;
                 }
-                Ok(())
+                Ok(buf)
             }
             DIGITAL_MESSAGE...0x9F => {
                 let port = (buf[0] as i32) & 0x0F;
@@ -419,12 +479,12 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                         }
                     }
                 }
-                Ok(())
+                Ok(buf)
             }
             CC_EVENT => {
                 // Read the rest of the information.
                 buf.extend(&try!(read(&mut self.connection, 2)));
-                Ok(())
+                Ok(buf)
             }
             START_SYSEX => {
                 loop {
@@ -437,7 +497,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                 match buf[1] {
                     HID_RESPONSE => {
                         self.hid.set(buf[2], buf[3]);
-                        Ok(())
+                        Ok(buf)
                     }
                     ANALOG_MAPPING_RESPONSE => {
                         if self.pins.len() > 0 {
@@ -449,7 +509,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                                 i += 1;
                             }
                         }
-                        Ok(())
+                        Ok(buf)
                     }
                     CAPABILITY_RESPONSE => {
                         let mut pin = 0;
@@ -479,13 +539,13 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                             });
                             i += 2;
                         }
-                        Ok(())
+                        Ok(buf)
                     }
                     REPORT_FIRMWARE => {
                         self.firmware_version = format!("{:o}.{:o}", buf[2], buf[3]);
                         self.firmware_name =
                             str::from_utf8(&buf[4..buf.len() - 1]).unwrap().to_string();
-                        Ok(())
+                        Ok(buf)
                     }
                     I2C_REPLY => {
                         let len = buf.len();
@@ -507,7 +567,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                             i += 2;
                         }
                         self.i2c_data.push(reply);
-                        Ok(())
+                        Ok(buf)
                     }
                     _ => Err(Error::new(ErrorKind::Other, "unknown sysex code")),
                 }
