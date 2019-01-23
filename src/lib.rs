@@ -63,6 +63,7 @@ pub const HID_BUTTON_JOYSTICK: u8 = 13;
 pub const HID_ENABLED: u8 = 100;
 pub const HID_SETTING_JS_SENSITIVITY: u8 = 101;
 pub const HID_SETTING_JS_INVERTED: u8 = 102;
+pub const CC_DATA_STREAMING_ENABLED: u8 = 103;
 
 fn read<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
     let mut vec: Vec<u8> = vec![];
@@ -150,8 +151,8 @@ impl HID {
         }
     }
 
-    pub fn enabled(&self) -> Option<bool> {
-        return self.get_bool(&HID_ENABLED);
+    pub fn enabled(&self, config: &u8) -> Option<bool> {
+        return self.get_bool(config);
     }
 }
 
@@ -238,6 +239,8 @@ impl<T: io::Read + io::Write> Board<T> {
         try!(b.query_analog_mapping());
         try!(b.read_and_decode());
         try!(b.hid_get(HID_ENABLED));
+        try!(b.read_and_decode());
+        try!(b.hid_get(CC_DATA_STREAMING_ENABLED));
         try!(b.read_and_decode());
         try!(b.hid_get(HID_BUTTON_UP));
         try!(b.read_and_decode());
