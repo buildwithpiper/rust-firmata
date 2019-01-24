@@ -92,6 +92,30 @@ fn read<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
     return Ok(vec);
 }
 
+fn read_once<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
+    let mut vec: Vec<u8> = vec![];
+    let mut len = len;
+
+    loop {
+        let buf: &mut [u8; 1] = &mut [0u8];
+
+        match port.read(buf) {
+            Ok(_) => {
+                vec.push(buf[0]);
+                len = len - 1;
+                if len == 0 {
+                    break;
+                }
+            }
+            Err(e) => {
+                return Err(Error::new(ErrorKind::Other, ""));
+            }
+        }
+    }
+
+    return Ok(vec);
+}
+
 /// A structure representing an I2C reply.
 #[derive(Debug)]
 pub struct I2CReply {
@@ -429,29 +453,30 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
         let start_time = Instant::now();
 
         loop {
-            // Peek 1 byte to look for identifiers.
-            buf = try!(read(&mut self.connection, 1));
+            if start_time.elapsed().as_secs() > 2 {
+                return Err(Error::new(ErrorKind::Other, "Timed Out"));
+            }
 
-            is_identifier = is_id(buf[0], PROTOCOL_VERSION..=PROTOCOL_VERSION) ||
+            // Peek 1 byte to look for identifiers.
+            match read_once(&mut self.connection, 1) {
+                Ok(mut buf) => {
+                    is_identifier = is_id(buf[0], PROTOCOL_VERSION..=PROTOCOL_VERSION) ||
                             is_id(buf[0], START_SYSEX..=START_SYSEX) ||
                             is_id(buf[0], CC_EVENT..=CC_EVENT) ||
                             is_id(buf[0], ANALOG_MESSAGE..0xEF) ||
                             is_id(buf[0], DIGITAL_MESSAGE..0x9F);
-            match is_identifier && (buf[0] == expected || expected == 0) {
-                true => {
-                    // Get the rest of the header.
-                    buf.extend(&try!(read(&mut self.connection, 2)));
-                    break;
-                },
-                false => {
-                    if start_time.elapsed().as_secs() > 2 {
-                        return Err(Error::new(ErrorKind::Other, "Timed Out"));
+                    match is_identifier && (buf[0] == expected || expected == 0) {
+                        true => {
+                            // Get the rest of the header.
+                            buf.extend(&try!(read(&mut self.connection, 2)));
+                            return self.decode(buf);
+                        },
+                        false => {}
                     }
-                }
+                },
+                Err(e) => continue,
             }
         }
-
-        return self.decode(buf);
     }
 
     fn decode(&mut self, mut buf: Vec<u8>) -> Result<Vec<u8>> {
