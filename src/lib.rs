@@ -51,6 +51,8 @@ pub const STEPPER: u8 = 8;
 pub const ENCODER: u8 = 9;
 
 pub const CC_EVENT: u8 = 0x03;
+pub const CC_JOYSTICK_EVENT: u8 = 0x04;
+pub const CC_BUTTON_EVENT: u8 = 0x05;
 pub const HID_GET: u8 = 0x00;
 pub const HID_SET: u8 = 0x01;
 pub const HID_RESPONSE: u8 = 0x02;
@@ -447,9 +449,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
 
         fn is_id<T: Iterator<Item=u8>>(i: u8, mut s: T) -> bool { s.any(|v: u8| v == i) }
 
-        let mut buf: Vec<u8>;
         let mut is_identifier: bool;
-
         let start_time = Instant::now();
 
         loop {
