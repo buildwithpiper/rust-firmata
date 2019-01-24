@@ -444,7 +444,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                     break;
                 },
                 false => {
-                    if start_time.elapsed().as_secs() > 5 {
+                    if start_time.elapsed().as_secs() > 2 {
                         return Err(Error::new(ErrorKind::Other, "Timed Out"));
                     }
                 }
