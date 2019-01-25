@@ -109,9 +109,7 @@ fn read_once<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
                     break;
                 }
             }
-            Err(e) => {
-                return Err(Error::new(ErrorKind::Other, ""));
-            }
+            Err(_) => return Err(Error::new(ErrorKind::Other, ""))
         }
     }
 
@@ -227,7 +225,7 @@ pub trait Firmata {
     /// message.
     fn read_and_decode(&mut self) -> Result<()>;
     // This function reads from firmata device and waits for an specific message.
-    fn expected_read_and_decode(&mut self, expected: u8) -> Result<Vec<u8>>;
+    fn read_and_decode_message(&mut self, message_id: u8, timeout: isize) -> Result<Vec<u8>>;
     // This function decodes a message head.
     fn decode(&mut self, buf: Vec<u8>) -> Result<Vec<u8>>;
 
@@ -425,14 +423,14 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
     }
 
     fn read_and_decode(&mut self) -> Result<()> {
-        let buf = try!(read(&mut self.connection, 3));
-        match self.decode(buf) {
+        // In original implementation read_and_decode has no timeout, keep like that.
+        match self.read_and_decode_message(0, -1) {
             Ok(_) => Ok(()),
             Err(e) => Err(e)
         }
     }
 
-    fn expected_read_and_decode(&mut self, expected: u8) -> Result<Vec<u8>> {
+    fn read_and_decode_message(&mut self, message_id: u8, timeout: isize) -> Result<Vec<u8>> {
         /*
           Logical extension of read_and_decode method, it accepts an
           expected identifier and reads serial port until that identifier
@@ -453,7 +451,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
         let start_time = Instant::now();
 
         loop {
-            if start_time.elapsed().as_secs() > 2 {
+            if start_time.elapsed().as_secs() > timeout as u64 && timeout >= 0 {
                 return Err(Error::new(ErrorKind::Other, "Timed Out"));
             }
 
@@ -465,7 +463,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                             is_id(buf[0], CC_EVENT..=CC_EVENT) ||
                             is_id(buf[0], ANALOG_MESSAGE..0xEF) ||
                             is_id(buf[0], DIGITAL_MESSAGE..0x9F);
-                    match is_identifier && (buf[0] == expected || expected == 0) {
+                    match is_identifier && (buf[0] == message_id || message_id == 0) {
                         true => {
                             // Get the rest of the header.
                             buf.extend(&try!(read(&mut self.connection, 2)));
@@ -474,7 +472,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                         false => {}
                     }
                 },
-                Err(e) => continue,
+                Err(_) => continue,
             }
         }
     }
