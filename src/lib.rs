@@ -115,7 +115,7 @@ fn read_once<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
         }
     }
 
-    return Ok(vec);
+    Ok(vec)
 }
 
 /// A structure representing an I2C reply.
