@@ -53,14 +53,14 @@ pub const ENCODER: u8 = 9;
 pub const CC_EVENT: u8 = 0x03;
 pub const CC_JOYSTICK_EVENT: u8 = 0x04;
 pub const CC_BUTTON_EVENT: u8 = 0x05;
-pub const HID_GET: u8 = 0x00;
-pub const HID_SET: u8 = 0x01;
-pub const HID_RESPONSE: u8 = 0x02;
-pub const HID_BUTTON_UP: u8 = 6;
-pub const HID_BUTTON_DOWN: u8 = 7;
-pub const HID_BUTTON_LEFT: u8 = 8;
-pub const HID_BUTTON_RIGHT: u8 = 9;
-pub const HID_BUTTON_JOYSTICK: u8 = 13;
+pub const CC_GET: u8 = 0x00;
+pub const CC_SET: u8 = 0x01;
+pub const CC_RESPONSE: u8 = 0x02;
+pub const CC_BUTTON_UP: u8 = 6;
+pub const CC_BUTTON_DOWN: u8 = 7;
+pub const CC_BUTTON_LEFT: u8 = 8;
+pub const CC_BUTTON_RIGHT: u8 = 9;
+pub const CC_BUTTON_JOYSTICK: u8 = 13;
 
 pub const HID_ENABLED: u8 = 100;
 pub const HID_SETTING_JS_SENSITIVITY: u8 = 101;
@@ -142,15 +142,15 @@ pub struct Pin {
     pub mode: u8,
 }
 
-/// A structure representing the current state and configuration of HID device.
+/// A structure representing the current state and configuration of CC device.
 #[derive(Debug)]
-pub struct HID {
+pub struct CCSettings {
     pub config_map: HashMap<u8, u8>,
 }
 
-impl HID {
+impl CCSettings {
     fn new() -> Self {
-        HID {
+        CCSettings {
             config_map: HashMap::new(),
         }
     }
@@ -231,8 +231,8 @@ pub trait Firmata {
     // This function decodes a message head.
     fn decode(&mut self, buf: Vec<u8>) -> Result<Vec<u8>>;
 
-    fn hid_get(&mut self, config: u8) -> Result<()>;
-    fn hid_set(&mut self, config: u8, value: u8) -> Result<()>;
+    fn settings_get(&mut self, config: u8) -> Result<()>;
+    fn settings_set(&mut self, config: u8, value: u8) -> Result<()>;
 }
 
 /// A structure representing a firmata board.
@@ -243,7 +243,7 @@ pub struct Board<T: io::Read + io::Write> {
     pub protocol_version: String,
     pub firmware_name: String,
     pub firmware_version: String,
-    pub hid: HID,
+    pub cc_settings: CCSettings,
 }
 
 impl<T: io::Read + io::Write> Board<T> {
@@ -256,7 +256,7 @@ impl<T: io::Read + io::Write> Board<T> {
             protocol_version: String::new(),
             pins: vec![],
             i2c_data: vec![],
-            hid: HID::new(),
+            cc_settings: CCSettings::new(),
         };
         try!(b.query_firmware());
         try!(b.read_and_decode());
@@ -264,19 +264,19 @@ impl<T: io::Read + io::Write> Board<T> {
         // try!(b.read_and_decode());
         try!(b.query_analog_mapping());
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_ENABLED));
+        try!(b.settings_get(HID_ENABLED));
         try!(b.read_and_decode());
-        try!(b.hid_get(CC_DATA_STREAMING_ENABLED));
+        try!(b.settings_get(CC_DATA_STREAMING_ENABLED));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_UP));
+        try!(b.settings_get(CC_BUTTON_UP));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_DOWN));
+        try!(b.settings_get(CC_BUTTON_DOWN));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_LEFT));
+        try!(b.settings_get(CC_BUTTON_LEFT));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_RIGHT));
+        try!(b.settings_get(CC_BUTTON_RIGHT));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_JOYSTICK));
+        try!(b.settings_get(CC_BUTTON_JOYSTICK));
         try!(b.read_and_decode());
         // try!(b.report_digital(0, 1));
         // try!(b.report_digital(1, 1));
@@ -285,15 +285,15 @@ impl<T: io::Read + io::Write> Board<T> {
 }
 
 impl<T: io::Read + io::Write> Firmata for Board<T> {
-    fn hid_get(&mut self, config: u8) -> Result<()> {
+    fn settings_get(&mut self, config: u8) -> Result<()> {
         self.connection
-            .write(&mut [START_SYSEX, HID_GET, config, END_SYSEX])
+            .write(&mut [START_SYSEX, CC_GET, config, END_SYSEX])
             .map(|_| ())
     }
-    fn hid_set(&mut self, config: u8, value: u8) -> Result<()> {
-        self.hid.set(config, value);
+    fn settings_set(&mut self, config: u8, value: u8) -> Result<()> {
+        self.cc_settings.set(config, value);
         self.connection
-            .write(&mut [START_SYSEX, HID_SET, config, value, END_SYSEX])
+            .write(&mut [START_SYSEX, CC_SET, config, value, END_SYSEX])
             .map(|_| ())
     }
 
@@ -523,8 +523,8 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                     }
                 }
                 match buf[1] {
-                    HID_RESPONSE => {
-                        self.hid.set(buf[2], buf[3]);
+                    CC_RESPONSE => {
+                        self.cc_settings.set(buf[2], buf[3]);
                         Ok(buf)
                     }
                     ANALOG_MAPPING_RESPONSE => {
