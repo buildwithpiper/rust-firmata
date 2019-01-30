@@ -2,10 +2,11 @@
 //! [Firmata Protocol](https://github.com/firmata/protocol)
 use std::collections::HashMap;
 use std::io;
+use std::iter::Iterator;
 use std::io::{Error, ErrorKind, Result, Write};
 use std::str;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const ENCODER_DATA: u8 = 0x61;
 pub const ANALOG_MAPPING_QUERY: u8 = 0x69;
@@ -49,18 +50,22 @@ pub const ONEWIRE: u8 = 7;
 pub const STEPPER: u8 = 8;
 pub const ENCODER: u8 = 9;
 
-pub const HID_GET: u8 = 0x00;
-pub const HID_SET: u8 = 0x01;
-pub const HID_RESPONSE: u8 = 0x02;
-pub const HID_BUTTON_UP: u8 = 6;
-pub const HID_BUTTON_DOWN: u8 = 7;
-pub const HID_BUTTON_LEFT: u8 = 8;
-pub const HID_BUTTON_RIGHT: u8 = 9;
-pub const HID_BUTTON_JOYSTICK: u8 = 13;
+pub const CC_EVENT: u8 = 0x03;
+pub const CC_JOYSTICK_EVENT: u8 = 0x04;
+pub const CC_BUTTON_EVENT: u8 = 0x05;
+pub const CC_GET: u8 = 0x00;
+pub const CC_SET: u8 = 0x01;
+pub const CC_RESPONSE: u8 = 0x02;
+pub const CC_BUTTON_UP: u8 = 6;
+pub const CC_BUTTON_DOWN: u8 = 7;
+pub const CC_BUTTON_LEFT: u8 = 8;
+pub const CC_BUTTON_RIGHT: u8 = 9;
+pub const CC_BUTTON_JOYSTICK: u8 = 13;
 
 pub const HID_ENABLED: u8 = 100;
 pub const HID_SETTING_JS_SENSITIVITY: u8 = 101;
 pub const HID_SETTING_JS_INVERTED: u8 = 102;
+pub const CC_DATA_STREAMING_ENABLED: u8 = 103;
 
 fn read<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
     let mut vec: Vec<u8> = vec![];
@@ -89,6 +94,28 @@ fn read<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
     return Ok(vec);
 }
 
+fn read_once<T: io::Read>(port: &mut T, len: i32) -> Result<(Vec<u8>)> {
+    let mut vec: Vec<u8> = vec![];
+    let mut len = len;
+
+    loop {
+        let buf: &mut [u8; 1] = &mut [0u8];
+
+        match port.read(buf) {
+            Ok(_) => {
+                vec.push(buf[0]);
+                len = len - 1;
+                if len == 0 {
+                    break;
+                }
+            }
+            Err(_) => return Err(Error::new(ErrorKind::Other, ""))
+        }
+    }
+
+    Ok(vec)
+}
+
 /// A structure representing an I2C reply.
 #[derive(Debug)]
 pub struct I2CReply {
@@ -113,15 +140,15 @@ pub struct Pin {
     pub mode: u8,
 }
 
-/// A structure representing the current state and configuration of HID device.
+/// A structure representing the current state and configuration of CC device.
 #[derive(Debug)]
-pub struct HID {
+pub struct CCSettings {
     pub config_map: HashMap<u8, u8>,
 }
 
-impl HID {
+impl CCSettings {
     fn new() -> Self {
-        HID {
+        CCSettings {
             config_map: HashMap::new(),
         }
     }
@@ -148,8 +175,8 @@ impl HID {
         }
     }
 
-    pub fn enabled(&self) -> Option<bool> {
-        return self.get_bool(&HID_ENABLED);
+    pub fn enabled(&self, config: &u8) -> Option<bool> {
+        return self.get_bool(config);
     }
 }
 
@@ -197,9 +224,13 @@ pub trait Firmata {
     /// This function reads from the firmata device and parses one firmata
     /// message.
     fn read_and_decode(&mut self) -> Result<()>;
+    // This function reads from firmata device and waits for an specific message.
+    fn read_and_decode_message(&mut self, message_id: u8, timeout: isize) -> Result<Vec<u8>>;
+    // This function decodes a message head.
+    fn decode(&mut self, buf: Vec<u8>) -> Result<Vec<u8>>;
 
-    fn hid_get(&mut self, config: u8) -> Result<()>;
-    fn hid_set(&mut self, config: u8, value: u8) -> Result<()>;
+    fn settings_get(&mut self, config: u8) -> Result<()>;
+    fn settings_set(&mut self, config: u8, value: u8) -> Result<()>;
 }
 
 /// A structure representing a firmata board.
@@ -210,7 +241,7 @@ pub struct Board<T: io::Read + io::Write> {
     pub protocol_version: String,
     pub firmware_name: String,
     pub firmware_version: String,
-    pub hid: HID,
+    pub cc_settings: CCSettings,
 }
 
 impl<T: io::Read + io::Write> Board<T> {
@@ -223,42 +254,44 @@ impl<T: io::Read + io::Write> Board<T> {
             protocol_version: String::new(),
             pins: vec![],
             i2c_data: vec![],
-            hid: HID::new(),
+            cc_settings: CCSettings::new(),
         };
         try!(b.query_firmware());
         try!(b.read_and_decode());
-        try!(b.query_capabilities());
-        try!(b.read_and_decode());
+        // try!(b.query_capabilities());
+        // try!(b.read_and_decode());
         try!(b.query_analog_mapping());
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_ENABLED));
+        try!(b.settings_get(HID_ENABLED));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_UP));
+        try!(b.settings_get(CC_DATA_STREAMING_ENABLED));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_DOWN));
+        try!(b.settings_get(CC_BUTTON_UP));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_LEFT));
+        try!(b.settings_get(CC_BUTTON_DOWN));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_RIGHT));
+        try!(b.settings_get(CC_BUTTON_LEFT));
         try!(b.read_and_decode());
-        try!(b.hid_get(HID_BUTTON_JOYSTICK));
+        try!(b.settings_get(CC_BUTTON_RIGHT));
         try!(b.read_and_decode());
-        try!(b.report_digital(0, 1));
-        try!(b.report_digital(1, 1));
+        try!(b.settings_get(CC_BUTTON_JOYSTICK));
+        try!(b.read_and_decode());
+        // try!(b.report_digital(0, 1));
+        // try!(b.report_digital(1, 1));
         return Ok(b);
     }
 }
 
 impl<T: io::Read + io::Write> Firmata for Board<T> {
-    fn hid_get(&mut self, config: u8) -> Result<()> {
+    fn settings_get(&mut self, config: u8) -> Result<()> {
         self.connection
-            .write(&mut [START_SYSEX, HID_GET, config, END_SYSEX])
+            .write(&mut [START_SYSEX, CC_GET, config, END_SYSEX])
             .map(|_| ())
     }
-    fn hid_set(&mut self, config: u8, value: u8) -> Result<()> {
-        self.hid.set(config, value);
+    fn settings_set(&mut self, config: u8, value: u8) -> Result<()> {
+        self.cc_settings.set(config, value);
         self.connection
-            .write(&mut [START_SYSEX, HID_SET, config, value, END_SYSEX])
+            .write(&mut [START_SYSEX, CC_SET, config, value, END_SYSEX])
             .map(|_| ())
     }
 
@@ -390,11 +423,65 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
     }
 
     fn read_and_decode(&mut self) -> Result<()> {
-        let mut buf = try!(read(&mut self.connection, 3));
+        // In original implementation read_and_decode has no timeout, keep like that.
+        match self.read_and_decode_message(0, -1) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e)
+        }
+    }
+
+    fn read_and_decode_message(&mut self, message_id: u8, timeout: isize) -> Result<Vec<u8>> {
+        /*
+          Logical extension of read_and_decode method, it accepts an
+          expected identifier and reads serial port until that identifier
+          is reached or after a given time passed. It also returns the
+          read buffer.
+          A message is expected to be of the form:
+
+          |__| |__| |__| |__| .... |__| |__|
+           ID                            TERMINATOR (SYSEX ONLY)
+          |<-- HEAD -->| |<-- BODY -->|
+
+          If expected == 0 it will read any command it gets.
+        */
+
+        fn is_id<T: Iterator<Item=u8>>(i: u8, mut s: T) -> bool { s.any(|v: u8| v == i) }
+
+        let mut is_identifier: bool;
+        let start_time = Instant::now();
+
+        loop {
+            if start_time.elapsed().as_secs() > timeout as u64 && timeout >= 0 {
+                return Err(Error::new(ErrorKind::Other, "Timed Out"));
+            }
+
+            // Peek 1 byte to look for identifiers.
+            match read_once(&mut self.connection, 1) {
+                Ok(mut buf) => {
+                    is_identifier = is_id(buf[0], PROTOCOL_VERSION..=PROTOCOL_VERSION) ||
+                            is_id(buf[0], START_SYSEX..=START_SYSEX) ||
+                            is_id(buf[0], CC_EVENT..=CC_EVENT) ||
+                            is_id(buf[0], ANALOG_MESSAGE..0xEF) ||
+                            is_id(buf[0], DIGITAL_MESSAGE..0x9F);
+                    match is_identifier && (buf[0] == message_id || message_id == 0) {
+                        true => {
+                            // Get the rest of the header.
+                            buf.extend(&try!(read(&mut self.connection, 2)));
+                            return self.decode(buf);
+                        },
+                        false => {}
+                    }
+                },
+                Err(_) => continue,
+            }
+        }
+    }
+
+    fn decode(&mut self, mut buf: Vec<u8>) -> Result<Vec<u8>> {
         match buf[0] {
             PROTOCOL_VERSION => {
                 self.protocol_version = format!("{:o}.{:o}", buf[1], buf[2]);
-                Ok(())
+                Ok(buf)
             }
             ANALOG_MESSAGE...0xEF => {
                 let value = (buf[1] as i32) | ((buf[2] as i32) << 7);
@@ -403,7 +490,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                 if self.pins.len() as i32 > pin {
                     self.pins[pin as usize].value = value;
                 }
-                Ok(())
+                Ok(buf)
             }
             DIGITAL_MESSAGE...0x9F => {
                 let port = (buf[0] as i32) & 0x0F;
@@ -418,7 +505,12 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                         }
                     }
                 }
-                Ok(())
+                Ok(buf)
+            }
+            CC_EVENT => {
+                // Read the rest of the information.
+                buf.extend(&try!(read(&mut self.connection, 2)));
+                Ok(buf)
             }
             START_SYSEX => {
                 loop {
@@ -429,9 +521,9 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                     }
                 }
                 match buf[1] {
-                    HID_RESPONSE => {
-                        self.hid.set(buf[2], buf[3]);
-                        Ok(())
+                    CC_RESPONSE => {
+                        self.cc_settings.set(buf[2], buf[3]);
+                        Ok(buf)
                     }
                     ANALOG_MAPPING_RESPONSE => {
                         if self.pins.len() > 0 {
@@ -443,7 +535,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                                 i += 1;
                             }
                         }
-                        Ok(())
+                        Ok(buf)
                     }
                     CAPABILITY_RESPONSE => {
                         let mut pin = 0;
@@ -473,13 +565,13 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                             });
                             i += 2;
                         }
-                        Ok(())
+                        Ok(buf)
                     }
                     REPORT_FIRMWARE => {
                         self.firmware_version = format!("{:o}.{:o}", buf[2], buf[3]);
                         self.firmware_name =
                             str::from_utf8(&buf[4..buf.len() - 1]).unwrap().to_string();
-                        Ok(())
+                        Ok(buf)
                     }
                     I2C_REPLY => {
                         let len = buf.len();
@@ -501,7 +593,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
                             i += 2;
                         }
                         self.i2c_data.push(reply);
-                        Ok(())
+                        Ok(buf)
                     }
                     _ => Err(Error::new(ErrorKind::Other, "unknown sysex code")),
                 }
