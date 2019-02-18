@@ -451,7 +451,7 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
         let start_time = Instant::now();
 
         loop {
-            if start_time.elapsed().as_secs() > timeout as u64 && timeout >= 0 {
+            if start_time.elapsed().subsec_millis() > timeout as u32 && timeout >= 0 {
                 return Err(Error::new(ErrorKind::Other, "Timed Out"));
             }
 
