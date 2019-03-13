@@ -226,6 +226,9 @@ pub trait Firmata {
     fn read_and_decode(&mut self) -> Result<()>;
     // This function reads from firmata device and waits for an specific message.
     fn read_and_decode_message(&mut self, message_id: u8, timeout: isize) -> Result<Vec<u8>>;
+    // Reading settings will fail sometimes (this has been tested) this function ensures
+    // successful read of settings.
+    fn read_setting_until_some(&mut self, setting: u8) -> Result<()>;
     // This function decodes a message head.
     fn decode(&mut self, buf: Vec<u8>) -> Result<Vec<u8>>;
 
@@ -258,26 +261,19 @@ impl<T: io::Read + io::Write> Board<T> {
         };
         try!(b.query_firmware());
         try!(b.read_and_decode());
-        // try!(b.query_capabilities());
-        // try!(b.read_and_decode());
         try!(b.query_analog_mapping());
         try!(b.read_and_decode());
         try!(b.settings_get(HID_ENABLED));
         try!(b.read_and_decode());
         try!(b.settings_get(CC_DATA_STREAMING_ENABLED));
         try!(b.read_and_decode());
-        try!(b.settings_get(CC_BUTTON_UP));
-        try!(b.read_and_decode());
-        try!(b.settings_get(CC_BUTTON_DOWN));
-        try!(b.read_and_decode());
-        try!(b.settings_get(CC_BUTTON_LEFT));
-        try!(b.read_and_decode());
-        try!(b.settings_get(CC_BUTTON_RIGHT));
-        try!(b.read_and_decode());
-        try!(b.settings_get(CC_BUTTON_JOYSTICK));
-        try!(b.read_and_decode());
-        // try!(b.report_digital(0, 1));
-        // try!(b.report_digital(1, 1));
+
+        b.read_setting_until_some(CC_BUTTON_UP);
+        b.read_setting_until_some(CC_BUTTON_DOWN);
+        b.read_setting_until_some(CC_BUTTON_LEFT);
+        b.read_setting_until_some(CC_BUTTON_RIGHT);
+        b.read_setting_until_some(CC_BUTTON_JOYSTICK);
+
         return Ok(b);
     }
 }
@@ -420,6 +416,19 @@ impl<T: io::Read + io::Write> Firmata for Board<T> {
         self.connection
             .write(&mut [PIN_MODE, pin as u8, mode as u8])
             .map(|_| ())
+    }
+
+    fn read_setting_until_some(&mut self, setting: u8) -> Result<()> {
+        loop {
+            try!(self.settings_get(setting));
+            try!(self.read_and_decode());
+
+            if self.cc_settings.get_char(&setting) != None {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     fn read_and_decode(&mut self) -> Result<()> {
